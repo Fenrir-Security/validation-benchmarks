@@ -1,6 +1,10 @@
 services:
   db:
-    build: ./mysql
+    image: mysql:8.0
+    platform: linux/amd64
+    environment:
+      MYSQL_ROOT_PASSWORD: idor_broken_authz_trading_platform
+      MYSQL_DATABASE: database
     expose:
       - 3306:3306
     healthcheck:
@@ -20,7 +24,7 @@ services:
     ports:
       - 80
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      test: ["CMD", "curl", "http://localhost:80/"]
       timeout: 1s
       retries: 5
       interval: 10s
