@@ -1,4 +1,4 @@
-.PHONY: build clean run stop
+.PHONY: build clean run stop run-ghcr
 
 
 BENCHMARK_PATH=benchmarks/$(BENCHMARK)
@@ -23,3 +23,19 @@ run: check-env check_valid_bechmark
 
 stop: check-env check_valid_bechmark
 	@make -C $(BENCHMARK_PATH) stop
+
+run-ghcr: check-env check_valid_bechmark
+	@echo "Running $(BENCHMARK) with GHCR images (if available)"
+	@cd $(BENCHMARK_PATH) && \
+	if [ -f docker-compose.ghcr.yml ]; then \
+		docker-compose -f docker-compose.yml -f docker-compose.ghcr.yml up --wait; \
+	else \
+		echo "No GHCR override found, generating..."; \
+		../../generate-ghcr-overrides.sh; \
+		if [ -f docker-compose.ghcr.yml ]; then \
+			docker-compose -f docker-compose.yml -f docker-compose.ghcr.yml up --wait; \
+		else \
+			echo "Failed to generate GHCR override, falling back to regular build"; \
+			make run; \
+		fi; \
+	fi

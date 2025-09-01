@@ -1,0 +1,117 @@
+name: Build and Push Docker Images to GHCR
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      benchmarks: ${{ steps.generate-matrix.outputs.benchmarks }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Generate benchmark matrix
+        id: generate-matrix
+        run: |
+          cd benchmarks
+          BENCHMARKS=$(ls -1 | grep "XBEN-" | jq -R -s -c 'split("\n")[:-1]')
+          echo "benchmarks=$BENCHMARKS" >> $GITHUB_OUTPUT
+          echo "Found benchmarks: $BENCHMARKS"
+
+  build-and-push:
+    needs: build-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        benchmark: ${{ fromJson(needs.build-matrix.outputs.benchmarks) }}
+      fail-fast: false # Continue building other images even if one fails
+      max-parallel: 5 # Limit parallel builds to avoid resource exhaustion
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate FLAG for benchmark
+        id: generate-flag
+        run: |
+          BENCHMARK_UPPER=$(echo "${{ matrix.benchmark }}" | tr '[:lower:]' '[:upper:]')
+          FLAG=$(echo -n "$BENCHMARK_UPPER" | openssl sha256 -r | cut -d' ' -f1)
+          FLAG_FMT="FLAG{$FLAG}"
+          echo "flag=$FLAG_FMT" >> $GITHUB_OUTPUT
+          echo "benchmark_upper=$BENCHMARK_UPPER" >> $GITHUB_OUTPUT
+          echo "Generated FLAG: $FLAG_FMT for $BENCHMARK_UPPER"
+
+      - name: Extract services to build
+        id: extract-services
+        working-directory: benchmarks/${{ matrix.benchmark }}
+        run: |
+          # Extract service names that have 'build' directive (not pre-built images)
+          SERVICES=$(docker-compose config --services 2>/dev/null | while read service; do
+            if docker-compose config | grep -A 10 "^  $service:" | grep -q "build:"; then
+              echo "$service"
+            fi
+          done | jq -R -s -c 'split("\n")[:-1]')
+          echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          echo "Services to build for ${{ matrix.benchmark }}: $SERVICES"
+
+      - name: Build and push images
+        working-directory: benchmarks/${{ matrix.benchmark }}
+        run: |
+          SERVICES='${{ steps.extract-services.outputs.services }}'
+          echo "$SERVICES" | jq -r '.[]' | while read service; do
+            if [ -z "$service" ]; then
+              continue
+            fi
+            
+            IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.benchmark }}-${service}:latest"
+            echo "Building and pushing $IMAGE_TAG"
+            
+            # Build the specific service
+            docker-compose build --build-arg FLAG="${{ steps.generate-flag.outputs.flag }}" --build-arg flag="${{ steps.generate-flag.outputs.flag }}" "$service"
+            
+            # Get the built image ID
+            IMAGE_ID=$(docker-compose images -q "$service")
+            
+            if [ -n "$IMAGE_ID" ]; then
+              # Tag the image for GHCR
+              docker tag "$IMAGE_ID" "$IMAGE_TAG"
+              
+              # Push to GHCR
+              docker push "$IMAGE_TAG"
+              echo "Successfully pushed $IMAGE_TAG"
+            else
+              echo "Warning: Could not find built image for service $service"
+            fi
+          done
+
+      - name: Clean up local images
+        if: always()
+        working-directory: benchmarks/${{ matrix.benchmark }}
+        run: |
+          # Clean up local images to save space
+          docker-compose down --rmi local --volumes --remove-orphans || true
+          docker system prune -f || true

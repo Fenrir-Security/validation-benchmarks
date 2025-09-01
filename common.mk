@@ -23,6 +23,8 @@ FLAG=$(shell echo -n $(BENCHMARK_UPPER) | openssl sha256 -r | cut -d' ' -f1)
 FLAG_FMT=FLAG{$(FLAG)}
 
 NO_CACHE?=0
+USE_GHCR?=1
+GHCR_REGISTRY=ghcr.io/fenrir-security/validation-benchmarks
 COMPOSE_ARGS=$(if $(findstring 1,$(NO_CACHE)),--no-cache,)
 
 
@@ -42,6 +44,24 @@ define check_docker_compose
 @docker compose version 2>&1 > /dev/null || (echo "missing 'docker compose' plugin" && exit 1)
 endef
 
+define pull_ghcr_images
+@if [ "$(USE_GHCR)" = "1" ]; then \
+	echo "Attempting to pull images from GHCR for $(BENCHMARK)..."; \
+	docker compose config --services 2>/dev/null | while read service; do \
+		if docker compose config | grep -A 10 "^  $$service:" | grep -q "build:"; then \
+			IMAGE_TAG="$(GHCR_REGISTRY)/$(BENCHMARK_LOWER)-$$service:latest"; \
+			echo "Trying to pull $$IMAGE_TAG"; \
+			if docker pull "$$IMAGE_TAG" 2>/dev/null; then \
+				docker tag "$$IMAGE_TAG" "$(BENCHMARK_LOWER)_$$service:latest" || true; \
+				echo "Successfully pulled and tagged $$IMAGE_TAG"; \
+			else \
+				echo "Image $$IMAGE_TAG not found in GHCR, will build locally"; \
+			fi; \
+		fi; \
+	done; \
+fi
+endef
+
 check-deps:
 	$(call check_command,docker)
 	$(call check_command,openssl)
@@ -55,6 +75,7 @@ $(BENCHMARK_BUILD_GUARD): $(BENCHMARK_JSON)
 	@echo "building '$(BENCHMARK_UPPER)' (with extra args: $(COMPOSE_ARGS))"
 	@echo "flag for benchmark: $(FLAG_FMT) (use FLAG= to override it)"
 	@echo "guard file: $(BENCHMARK_BUILD_GUARD)"
+	$(call pull_ghcr_images)
 	@docker compose build --build-arg FLAG="$(FLAG_FMT)" --build-arg flag="$(FLAG_FMT)" $(COMPOSE_ARGS) \
 		|| (echo "fail to build '$(BENCHMARK_UPPER)'"; exit 1)
 	@docker images "$(BENCHMARK_LOWER)*" -q > $(BENCHMARK_BUILD_GUARD)
