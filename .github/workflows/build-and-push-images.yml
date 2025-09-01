@@ -55,6 +55,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Verify Docker Compose
+        run: |
+          echo "Docker version:"
+          docker --version
+          echo "Docker Compose version:"
+          docker compose version
+          echo "Docker Compose plugin is available ✓"
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -148,10 +156,10 @@ jobs:
             
             # Build the specific service
             echo "Building service: $service"
-            docker-compose build --build-arg FLAG="${{ steps.generate-flag.outputs.flag }}" --build-arg flag="${{ steps.generate-flag.outputs.flag }}" "$service"
+            docker compose build --build-arg FLAG="${{ steps.generate-flag.outputs.flag }}" --build-arg flag="${{ steps.generate-flag.outputs.flag }}" "$service"
             
-            # Get the built image name from docker-compose
-            LOCAL_IMAGE=$(docker-compose images -q "$service" 2>/dev/null | head -n1)
+            # Get the built image name from docker compose
+            LOCAL_IMAGE=$(docker compose images -q "$service" 2>/dev/null | head -n1)
             
             if [ -z "$LOCAL_IMAGE" ]; then
               # Alternative: try to find by the expected naming pattern
@@ -185,5 +193,5 @@ jobs:
         working-directory: benchmarks/${{ matrix.benchmark }}
         run: |
           # Clean up local images to save space
-          docker-compose down --rmi local --volumes --remove-orphans || true
+          docker compose down --rmi local --volumes --remove-orphans || true
           docker system prune -f || true

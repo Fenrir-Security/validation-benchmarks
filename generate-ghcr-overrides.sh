@@ -36,8 +36,8 @@ for benchmark_dir in "$BENCHMARKS_DIR"/XBEN-*-24; do
     
     # Extract services that have build directives
     cd "$benchmark_dir"
-    services_with_build=$(docker-compose config --services 2>/dev/null | while read service; do
-        if docker-compose config 2>/dev/null | grep -A 10 "^  $service:" | grep -q "build:"; then
+    services_with_build=$(docker compose config --services 2>/dev/null | while read service; do
+        if docker compose config 2>/dev/null | grep -A 10 "^  $service:" | grep -q "build:"; then
             echo "$service"
         fi
     done)
@@ -73,4 +73,4 @@ echo "  BENCHMARK=XBEN-001-24 make run-ghcr"
 echo ""
 echo "Or manually with:"
 echo "  cd benchmarks/XBEN-001-24"
-echo "  docker-compose -f docker-compose.yml -f docker-compose.ghcr.yml up"
+echo "  docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up"

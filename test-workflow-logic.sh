@@ -73,7 +73,7 @@ except Exception as e:
     echo "Generated FLAG: $FLAG_FMT"
     
     # Test docker-compose config validation
-    if docker-compose config > /dev/null 2>&1; then
+    if docker compose config > /dev/null 2>&1; then
         echo "✓ Docker compose configuration is valid"
     else
         echo "✗ Docker compose configuration is invalid"

@@ -24,7 +24,7 @@ BENCHMARK=XBEN-001-24 make run-ghcr
 
 # Then run with override
 cd benchmarks/XBEN-001-24
-docker-compose -f docker-compose.yml -f docker-compose.ghcr.yml up
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up
 ```
 
 ### Option 3: Manual Docker Commands

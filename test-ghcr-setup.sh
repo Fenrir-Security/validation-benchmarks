@@ -21,7 +21,7 @@ fi
 # Test 3: Validate docker-compose syntax
 echo "Test 3: Validating docker-compose syntax"
 cd benchmarks/XBEN-001-24
-if docker-compose -f docker-compose.yml -f docker-compose.ghcr.yml config > /dev/null; then
+if docker compose -f docker-compose.yml -f docker-compose.ghcr.yml config > /dev/null; then
     echo "✓ Docker compose configuration is valid"
 else
     echo "✗ Docker compose configuration is invalid"
