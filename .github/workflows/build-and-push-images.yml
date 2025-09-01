@@ -63,135 +63,71 @@ jobs:
           docker compose version
           echo "Docker Compose plugin is available ✓"
 
-      - name: Install dependencies
+      - name: Build images using make
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-yaml || pip3 install pyyaml
+          echo "Building ${{ matrix.benchmark }} using make build"
+          cd benchmarks/${{ matrix.benchmark }}
+          make build
 
-      - name: Generate FLAG for benchmark
-        id: generate-flag
+      - name: Extract and push images
         run: |
-          BENCHMARK_UPPER=$(echo "${{ matrix.benchmark }}" | tr '[:lower:]' '[:upper:]')
-          FLAG=$(echo -n "$BENCHMARK_UPPER" | openssl sha256 -r | cut -d' ' -f1)
-          FLAG_FMT="FLAG{$FLAG}"
-          echo "flag=$FLAG_FMT" >> $GITHUB_OUTPUT
-          echo "benchmark_upper=$BENCHMARK_UPPER" >> $GITHUB_OUTPUT
-          echo "Generated FLAG: $FLAG_FMT for $BENCHMARK_UPPER"
-
-      - name: Extract services to build
-        id: extract-services
-        working-directory: benchmarks/${{ matrix.benchmark }}
-        run: |
-          # Extract service names that have 'build' directive using Python with fallback
-          SERVICES=$(python3 -c "
-          import json
-          import sys
-          
-          try:
-              import yaml
-              # Use PyYAML if available
-              with open('docker-compose.yml', 'r') as f:
-                  compose = yaml.safe_load(f)
-              
-              services_with_build = []
-              if 'services' in compose:
-                  for service_name, service_config in compose['services'].items():
-                      if isinstance(service_config, dict) and 'build' in service_config:
-                          services_with_build.append(service_name)
-              
-              print(json.dumps(services_with_build))
-              
-          except ImportError:
-              # Fallback to simple text parsing if PyYAML not available
-              services_with_build = []
-              with open('docker-compose.yml', 'r') as f:
-                  lines = f.readlines()
-              
-              current_service = None
-              indent_level = 0
-              
-              for line in lines:
-                  stripped = line.strip()
-                  if not stripped or stripped.startswith('#'):
-                      continue
-                  
-                  # Calculate indentation
-                  line_indent = len(line) - len(line.lstrip())
-                  
-                  # Check if this is a service definition (under 'services:')
-                  if line_indent == 2 and ':' in stripped and not stripped.startswith('services'):
-                      current_service = stripped.split(':')[0].strip()
-                  elif current_service and 'build:' in stripped and line_indent > 2:
-                      if current_service not in services_with_build:
-                          services_with_build.append(current_service)
-              
-              print(json.dumps(services_with_build))
-              
-          except Exception as e:
-              print('[]', file=sys.stderr)
-              print(f'Error parsing docker-compose.yml: {e}', file=sys.stderr)
-              print('[]')
-          ")
-          echo "services=$SERVICES" >> $GITHUB_OUTPUT
-          echo "Services to build for ${{ matrix.benchmark }}: $SERVICES"
-
-      - name: Build and push images
-        working-directory: benchmarks/${{ matrix.benchmark }}
-        run: |
-          SERVICES='${{ steps.extract-services.outputs.services }}'
           BENCHMARK_LOWER=$(echo "${{ matrix.benchmark }}" | tr '[:upper:]' '[:lower:]')
+          cd benchmarks/${{ matrix.benchmark }}
           
-          if [ "$SERVICES" = "[]" ] || [ -z "$SERVICES" ]; then
-            echo "No services with build directives found for ${{ matrix.benchmark }}, skipping..."
-            exit 0
+          # Check if build guard exists to confirm build succeeded
+          if [ ! -f .xben_build_done ]; then
+            echo "Build guard file not found, build may have failed"
+            exit 1
           fi
           
-          echo "$SERVICES" | jq -r '.[]' | while read service; do
-            if [ -z "$service" ]; then
-              continue
-            fi
+          # Read the image IDs from the build guard file
+          if [ -f .xben_build_done ]; then
+            echo "Found built images:"
+            cat .xben_build_done
             
-            IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${BENCHMARK_LOWER}-${service}:latest"
-            echo "Building and pushing $IMAGE_TAG"
+            # Get all images that match the benchmark pattern
+            IMAGES=$(docker images "${BENCHMARK_LOWER}*" --format "{{.Repository}}:{{.Tag}}" | grep -v "<none>")
             
-            # Build the specific service
-            echo "Building service: $service"
-            docker compose build --build-arg FLAG="${{ steps.generate-flag.outputs.flag }}" --build-arg flag="${{ steps.generate-flag.outputs.flag }}" "$service"
-            
-            # Get the built image name from docker compose
-            LOCAL_IMAGE=$(docker compose images -q "$service" 2>/dev/null | head -n1)
-            
-            if [ -z "$LOCAL_IMAGE" ]; then
-              # Alternative: try to find by the expected naming pattern
-              LOCAL_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "${BENCHMARK_LOWER}[_-]${service}" | head -n1)
-            fi
-            
-            if [ -z "$LOCAL_IMAGE" ]; then
-              # Final fallback: try the compose project naming
-              LOCAL_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "${service}" | grep "$(basename $(pwd))" | head -n1)
-            fi
-            
-            if [ -n "$LOCAL_IMAGE" ]; then
-              # Tag the image for GHCR
-              echo "Tagging $LOCAL_IMAGE as $IMAGE_TAG"
-              docker tag "$LOCAL_IMAGE" "$IMAGE_TAG"
-              
-              # Push to GHCR
-              echo "Pushing $IMAGE_TAG to GHCR"
-              docker push "$IMAGE_TAG"
-              echo "Successfully pushed $IMAGE_TAG"
-            else
-              echo "Warning: Could not find built image for service $service"
+            if [ -z "$IMAGES" ]; then
+              echo "No images found matching pattern ${BENCHMARK_LOWER}*"
               echo "Available images:"
               docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}"
               exit 1
             fi
-          done
+            
+            echo "Images to push:"
+            echo "$IMAGES"
+            
+            # Push each image to GHCR
+            echo "$IMAGES" | while read local_image; do
+              if [ -z "$local_image" ]; then
+                continue
+              fi
+              
+              # Extract service name from image name
+              # Format is typically: benchmarkname_servicename:latest or benchmarkname-servicename:latest
+              SERVICE_NAME=$(echo "$local_image" | sed "s/${BENCHMARK_LOWER}[_-]//g" | sed 's/:latest$//')
+              
+              # Create GHCR tag
+              GHCR_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${BENCHMARK_LOWER}-${SERVICE_NAME}:latest"
+              
+              echo "Tagging $local_image as $GHCR_TAG"
+              docker tag "$local_image" "$GHCR_TAG"
+              
+              echo "Pushing $GHCR_TAG to GHCR"
+              docker push "$GHCR_TAG"
+              echo "Successfully pushed $GHCR_TAG"
+            done
+          else
+            echo "No build guard file found, skipping push"
+          fi
 
       - name: Clean up local images
         if: always()
-        working-directory: benchmarks/${{ matrix.benchmark }}
         run: |
           # Clean up local images to save space
+          cd benchmarks/${{ matrix.benchmark }}
           docker compose down --rmi local --volumes --remove-orphans || true
           docker system prune -f || true
+          # Clean up make build artifacts
+          make clean || true
