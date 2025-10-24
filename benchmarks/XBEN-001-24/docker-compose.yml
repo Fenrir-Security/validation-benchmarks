@@ -6,7 +6,7 @@ services:
       MYSQL_ROOT_PASSWORD: idor_broken_authz_trading_platform
       MYSQL_DATABASE: database
     expose:
-      - 3306:3306
+      - 3306
     healthcheck:
       test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost","--password=idor_broken_authz_trading_platform","-u","root"]
       timeout: 1s
